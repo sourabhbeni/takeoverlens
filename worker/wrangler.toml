@@ -6,8 +6,7 @@ compatibility_date = "2026-10-05"
 [assets]
 directory = "./public"
 
-# Scan state lives in KV (1h TTL). Create it once, then paste the id:
-#   npx wrangler kv namespace create SCANS
+# Scan state lives in KV (1h TTL). Created 2026-10-05 via API as "takeoverlens-scans".
 [[kv_namespaces]]
 binding = "SCANS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "7a62de918fd248718a1963c160fa3805"
