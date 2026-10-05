@@ -1,13 +1,15 @@
 // TakeoverLens on Cloudflare Workers — serverless subdomain takeover verification.
 //
-// Same API as the Python app: POST /api/scans starts a scan, GET /api/scans/{id}
-// is polled. Each poll processes a small chunk of subdomains (Workers have
-// limited per-request CPU), with scan state in KV. Passive recon only.
+// Same API as the Python app: POST /api/scans returns a scan_id immediately,
+// GET /api/scans/{id} is polled. Enumeration happens on the first poll and each
+// poll then processes a small chunk of subdomains (Workers have limited
+// per-request CPU), with scan state in KV. Passive recon only.
 
 import { matchService } from "./services.js";
 
 const CHUNK = 2;               // subdomains processed per poll — raise cautiously
 const HTTP_TIMEOUT_MS = 10000;
+const CRTSH_TIMEOUT_MS = 15000;
 const SCAN_TTL = 3600;         // scan state expires after 1h
 
 const DOMAIN_RE = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
@@ -37,7 +39,7 @@ async function doh(name, type) {
 async function enumerateCrtsh(domain) {
   const r = await fetch(`https://crt.sh/?q=%25.${domain}&output=json`, {
     headers: { "User-Agent": "takeoverlens/0.1" },
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(CRTSH_TIMEOUT_MS),
   });
   if (!r.ok) throw new Error(`crt.sh: HTTP ${r.status}`);
   const subs = new Set();
@@ -71,8 +73,8 @@ export async function checkSubdomain(sub) {
     subdomain: sub, cname: null, a_records: [], service: null,
     http_status: null, verdict: "ok", evidence: [],
   };
-  const cnames = await doh(sub, "CNAME");
-  result.a_records = (await doh(sub, "A")).slice(0, 4);
+  const [cnames, aRecs] = await Promise.all([doh(sub, "CNAME"), doh(sub, "A")]);
+  result.a_records = aRecs.slice(0, 4);
   if (!cnames.length) {
     result.evidence.push("No CNAME record — not a takeover vector via CNAME.");
     return result;
@@ -118,24 +120,18 @@ async function createScan(req, env) {
   if (!DOMAIN_RE.test(domain)) return json({ detail: "Invalid domain (e.g. example.com)" }, 400);
   if (!body.authorized) return json({ detail: "Confirm you are authorized to test this domain" }, 400);
 
-  let subs = [];
-  let enumNote = null;
-  try {
-    subs = await enumerateCrtsh(domain);
-  } catch (e) {
-    enumNote = `crt.sh unavailable (${String(e.message || e).slice(0, 120)}); using manual list + apex.`;
-  }
-  const manual = new Set(
-    (body.extra_subdomains || [])
-      .map((s) => String(s).trim().toLowerCase().replace(/\.$/, ""))
-      .filter((s) => s === domain || s.endsWith("." + domain))
-  );
-  subs = [...new Set([...subs, ...manual, domain])].sort();
-
+  const extra = [
+    ...new Set(
+      (body.extra_subdomains || [])
+        .map((s) => String(s).trim().toLowerCase().replace(/\.$/, ""))
+        .filter((s) => s === domain || s.endsWith("." + domain))
+    ),
+  ];
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  // Enumeration runs on the first poll so POST returns instantly.
   const scan = {
-    id, domain, status: "scanning", total: subs.length, done: 0,
-    results: [], queue: subs, enum_note: enumNote, error: null,
+    id, domain, extra, status: "enumerating", total: 0, done: 0,
+    results: [], queue: [], enum_note: null, error: null,
   };
   await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
   return json({ scan_id: id });
@@ -145,8 +141,23 @@ async function pollScan(id, env) {
   const raw = await env.SCANS.get(id);
   if (!raw) return json({ detail: "Unknown scan id" }, 404);
   const scan = JSON.parse(raw);
-  if (scan.status === "scanning") {
-    try {
+
+  try {
+    if (scan.status === "enumerating") {
+      let subs = [];
+      try {
+        subs = await enumerateCrtsh(scan.domain);
+      } catch (e) {
+        scan.enum_note = `crt.sh unavailable (${String(e.message || e).slice(0, 120)}); using manual list + apex.`;
+      }
+      const all = [...new Set([...subs, ...scan.extra, scan.domain])].sort();
+      scan.queue = all;
+      scan.total = all.length;
+      scan.status = "scanning";
+      delete scan.extra;
+    }
+
+    if (scan.status === "scanning") {
       const chunk = scan.queue.splice(0, CHUNK);
       for (const sub of chunk) {
         scan.results.push(await checkSubdomain(sub));
@@ -159,14 +170,16 @@ async function pollScan(id, env) {
             (a.subdomain < b.subdomain ? -1 : 1)
         );
       }
-      await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
-    } catch (e) {
-      scan.status = "error";
-      scan.error = String(e.message || e).slice(0, 300);
-      await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
     }
+
+    await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
+  } catch (e) {
+    scan.status = "error";
+    scan.error = String(e.message || e).slice(0, 300);
+    await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
   }
-  const { queue, ...pub } = scan;
+
+  const { queue, extra, ...pub } = scan;
   return json(pub);
 }
 
