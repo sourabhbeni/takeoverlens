@@ -1,0 +1,13 @@
+name = "takeoverlens"
+main = "src/worker.js"
+compatibility_date = "2026-10-05"
+
+# Static UI served from ./public (copy of the main app's index.html)
+[assets]
+directory = "./public"
+
+# Scan state lives in KV (1h TTL). Create it once, then paste the id:
+#   npx wrangler kv namespace create SCANS
+[[kv_namespaces]]
+binding = "SCANS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
