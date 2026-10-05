@@ -45,6 +45,25 @@ subset of [can-i-take-over-xyz](https://github.com/EdOverflow/can-i-take-over-xy
 - `POST /api/scans` → `{domain, extra_subdomains[], authorized}` → `{scan_id}`
 - `GET /api/scans/{scan_id}` → `{status, total, done, results[]}` (poll while scanning)
 
+## Deploy
+
+**Cloudflare Tunnel** (easiest, free) — run the Python app on your machine and
+expose it: full guide in [docs/TUNNEL.md](docs/TUNNEL.md), including a stable
+`takeoverlens.beniwal.me` hostname and locking it down with Cloudflare Access.
+
+**Cloudflare Workers** (serverless) — `worker/` is a complete port: the same
+scan engine in JavaScript, chunked polling (each poll processes a few
+subdomains to respect Worker CPU limits), scan state in KV, and the same UI as
+static assets.
+
+```bash
+cd worker
+npx wrangler kv namespace create SCANS   # paste the id into wrangler.toml
+npx wrangler deploy
+```
+
+The Workers verdict logic is covered by `worker/test.mjs` (5/5 cases green).
+
 ## License
 
 MIT
