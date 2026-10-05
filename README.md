@@ -62,7 +62,12 @@ npx wrangler kv namespace create SCANS   # paste the id into wrangler.toml
 npx wrangler deploy
 ```
 
+Live deployment: **https://takeoverlens.b3ni.workers.dev** (deployed 2026-10-05
+via the Cloudflare API).
+
 The Workers verdict logic is covered by `worker/test.mjs` (5/5 cases green).
+`worker/build-api-bundle.mjs` reproduces the API-deployed bundle (esbuild +
+inlined UI) without wrangler.
 
 ## License
 
