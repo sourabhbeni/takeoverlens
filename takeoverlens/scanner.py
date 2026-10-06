@@ -5,7 +5,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from .check import check_subdomain
-from .enumerate import enumerate_crtsh
+from .enumerate import enumerate_all
 
 MAX_WORKERS = 5
 
@@ -29,7 +29,20 @@ def start_scan(domain: str, extra_subdomains: list[str] | None = None) -> str:
 def get_scan(scan_id: str) -> dict | None:
     with _lock:
         scan = _scans.get(scan_id)
-        return dict(scan) if scan else None
+        if not scan:
+            return None
+        out = dict(scan)
+    # Live discovery: every known subdomain with its check status.
+    verdict_by_sub = {r["subdomain"]: r["verdict"] for r in out["results"]}
+    out["discovered"] = [
+        {
+            "subdomain": s,
+            "status": "done" if s in verdict_by_sub else "pending",
+            "verdict": verdict_by_sub.get(s),
+        }
+        for s in out.get("all", [])
+    ]
+    return out
 
 
 def _update(scan_id: str, **fields):
@@ -39,18 +52,18 @@ def _update(scan_id: str, **fields):
 
 def _run(scan_id: str, domain: str, extra: list[str]):
     try:
-        try:
-            subs = enumerate_crtsh(domain)
-            enum_note = None
-        except Exception as exc:  # noqa: BLE001 — fall back to manual/apex list
-            subs, enum_note = [], f"crt.sh unavailable ({exc}); using manual list + apex."
+        subs, notes = enumerate_all(domain)
+        enum_note = None
+        if notes:
+            enum_note = (
+                "Partial enumeration: " + "; ".join(notes) if subs
+                else "Enumeration sources failed (" + "; ".join(notes) + "); using manual list + apex."
+            )
 
         manual = {s.strip().lower().rstrip(".") for s in extra if s.strip()}
         manual = {s for s in manual if s == domain or s.endswith("." + domain)}
         subs = sorted(set(subs) | manual | {domain})
-        if enum_note:
-            subs = subs  # note surfaced via error field only if nothing to scan
-        _update(scan_id, status="scanning", total=len(subs), enum_note=enum_note)
+        _update(scan_id, status="scanning", total=len(subs), all=subs, enum_note=enum_note)
 
         results: list[dict] = []
 
