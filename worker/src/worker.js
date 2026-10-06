@@ -262,8 +262,14 @@ async function probeHandler(req) {
   if (host === "localhost" || host.startsWith("127.") || host === "[::1]") {
     return json({ detail: "Loopback targets blocked" }, 400);
   }
+  if (body.engine === "aegis") {
+    return json({ detail: "Aegis engine needs the Python backend — this Worker deployment supports the quick engine only" }, 501);
+  }
+  if (body.engine && body.engine !== "quick") {
+    return json({ detail: `Unknown probe engine: ${body.engine}` }, 400);
+  }
   const result = await probeUrl(url.toString());
-  return json({ url: url.toString(), ...result });
+  return json({ url: url.toString(), engine: "quick", ...result });
 }
 
 export default {
@@ -271,6 +277,8 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === "/api/scans" && req.method === "POST") return createScan(req, env);
     if (url.pathname === "/api/probe" && req.method === "POST") return probeHandler(req);
+    // Aegis is Python-only; the Worker ships the quick engine only.
+    if (url.pathname === "/api/probe" && req.method === "GET") return json({ engines: ["quick"] });
     const m = url.pathname.match(/^\/api\/scans\/([A-Za-z0-9]+)$/);
     if (m && req.method === "GET") return pollScan(m[1], env);
     return env.ASSETS.fetch(req);
