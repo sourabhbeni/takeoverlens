@@ -68,7 +68,7 @@ def _run(scan_id: str, domain: str, extra: list[str]):
         results: list[dict] = []
 
         def _one(sub):
-            res = check_subdomain(sub)
+            res = check_subdomain(sub, domain)
             with _lock:
                 sc = _scans[scan_id]
                 sc["results"].append(res)
