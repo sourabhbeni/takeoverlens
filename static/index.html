@@ -44,6 +44,19 @@
   .chip .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--muted); margin-right:6px; }
   .chip.pending .dot { animation:pulse 1s infinite; }
   @keyframes pulse { 50% { opacity:.25; } }
+  .pbtn { margin-top:6px; background:transparent; color:var(--accent); border:1px solid #5a2f2f;
+          border-radius:6px; padding:4px 10px; font-family:inherit; font-size:.72rem; cursor:pointer; }
+  .pbtn:hover { background:#2a1515; }
+  #probe-err { color:#ff8589; font-size:.85rem; margin-top:10px; display:none; }
+  .finding { border:1px solid var(--line); border-left-width:4px; border-radius:8px;
+             padding:10px 12px; margin:8px 0; font-size:.82rem; background:#0c0f0c; }
+  .finding.sev-high { border-left-color:var(--accent); }
+  .finding.sev-medium { border-left-color:var(--amber); }
+  .finding.sev-info { border-left-color:var(--muted); }
+  .finding .sev { float:right; font-size:.7rem; font-weight:700; text-transform:uppercase; }
+  .finding.sev-high .sev { color:#ff8589; } .finding.sev-medium .sev { color:#f0c27a; }
+  .finding .fev { color:var(--muted); font-size:.76rem; }
+  .pok { color:#7fe0a0; font-size:.85rem; } .pmut { color:var(--muted); font-size:.82rem; }
   #summary { display:none; gap:8px; margin:16px 0; flex-wrap:wrap; }
   .stat { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:.85rem; }
   table { width:100%; border-collapse:collapse; font-size:.82rem; }
@@ -93,6 +106,14 @@
         <table><thead><tr><th>Subdomain</th><th>DNS / Service</th><th>Verdict</th></tr></thead>
         <tbody id="rows"></tbody></table>
       </div>
+      <div class="card" id="probe-card" style="margin-top:16px">
+        <h2>SQLi / XSS probe</h2>
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:10px">Active check on query parameters — reflected-XSS canary + error-based SQLi. Findings are indicators, verify manually.</p>
+        <input type="text" id="probe-url" placeholder="https://site.example/search?q=test" spellcheck="false" />
+        <div style="margin-top:10px"><button class="btn" id="probe-go" style="padding:10px 22px;font-size:.9rem">Run probe</button></div>
+        <p id="probe-err"></p>
+        <div id="probe-out" style="margin-top:10px"></div>
+      </div>
     </div>
     <div>
       <div class="card rules">
@@ -102,6 +123,7 @@
           <li><b>Policy decides.</b> Most programs want fingerprint evidence in the report, not a completed takeover.</li>
           <li><b>404 ≠ vulnerable.</b> Only a service's known <i>unclaimed</i> fingerprint counts.</li>
           <li><b>Dangling ≠ proven.</b> A CNAME whose target doesn't resolve needs manual investigation.</li>
+          <li><b>Probe only with permission.</b> Active SQLi/XSS checks run attack payloads — same scope rules, no exceptions.</li>
           <li><b>Stay in scope.</b> Out-of-scope domains are off limits, no exceptions.</li>
         </ul>
       </div>
@@ -175,7 +197,7 @@ function render(s) {
     `<span class="stat">⚪ ${counts.ok} ok</span>`;
   $('rows').innerHTML = s.results.map(r => `
     <tr>
-      <td class="mono">${r.subdomain}</td>
+      <td class="mono">${r.subdomain}<br><button class="pbtn" onclick="fillProbe('${r.subdomain}')">probe SQLi/XSS</button></td>
       <td>${r.cname ? `<span class="mono">CNAME → ${r.cname}</span><br><span style="color:var(--muted)">${r.service || 'unknown service'}</span>`
                      : `<span style="color:var(--muted)">A: ${(r.a_records.join(', ') || '—')}</span>`}</td>
       <td><span class="badge v-${r.verdict}">${r.verdict.toUpperCase()}</span>
@@ -183,6 +205,40 @@ function render(s) {
     </tr>`).join('');
   $('results-card').style.display = 'block';
 }
+
+function fillProbe(sub) {
+  $('probe-url').value = 'https://' + sub + '/';
+  $('probe-card').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  $('probe-url').focus();
+}
+
+$('probe-go').addEventListener('click', async () => {
+  const url = $('probe-url').value.trim();
+  const err = $('probe-err'), out = $('probe-out');
+  err.style.display = 'none'; out.innerHTML = '';
+  if (!url) { err.textContent = 'Enter a URL with query parameters.'; err.style.display = 'block'; return; }
+  if (!$('auth').checked) { err.textContent = 'Tick the authorization box first — active probing needs permission.'; err.style.display = 'block'; return; }
+  $('probe-go').disabled = true;
+  out.innerHTML = '<p class="pmut">Probing…</p>';
+  try {
+    const r = await fetch('/api/probe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, authorized: true })
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    if (!d.findings.length) {
+      out.innerHTML = `<p class="pok">No indicators found (${d.requests} requests). ${d.note || ''}</p>`;
+    } else {
+      out.innerHTML = d.findings.map(f =>
+        `<div class="finding sev-${f.severity}"><span class="sev">${f.severity}</span>` +
+        `<b>${f.type.toUpperCase()}</b> · param <span class="mono">${f.param}</span><br>` +
+        `<span class="fev">${f.evidence}</span></div>`
+      ).join('') + `<p class="pmut">${d.note || ''}</p>`;
+    }
+  } catch (e) { err.textContent = 'Probe failed: ' + e.message; err.style.display = 'block'; }
+  $('probe-go').disabled = false;
+});
 </script>
 </body>
 </html>
