@@ -89,6 +89,16 @@ export async function checkSubdomain(sub, domain) {
   }
   const svc = matchService(target);
   if (!svc) {
+    // Unknown service — fetch once and look for definitive not-takeoverable
+    // signals before falling back to manual review.
+    const [status, body] = await fetchBody(sub);
+    result.http_status = status;
+    if (body.includes("error code: 1014")) {
+      result.evidence.push(
+        `CNAME points to ${target}, but Cloudflare rejected it (error 1014: CNAME Cross-User Banned) — the target zone doesn't serve this hostname and it isn't self-service claimable.`
+      );
+      return result;
+    }
     result.verdict = "review";
     result.evidence.push(`CNAME points to external host ${target} (unknown service) — check manually.`);
     return result;
