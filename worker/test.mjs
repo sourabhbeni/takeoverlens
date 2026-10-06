@@ -158,6 +158,23 @@ const pr3 = await worker.fetch(probeReq({ url: 'ftp://x/y', authorized: true }),
 console.log(`${pr3.status === 400 ? 'PASS' : 'FAIL'} POST /api/probe non-http URL -> ${pr3.status}`);
 if (pr3.status === 400) pass += 1;
 
-const TOTAL = cases.length + 3 + 7;
+// ---- 5. probe engine routing (Aegis is Python-only) ----
+const pr4 = await worker.fetch(new Request('http://x/api/probe'), env);
+const pr4j = await pr4.json();
+const pr4ok = pr4.status === 200 && JSON.stringify(pr4j.engines) === '["quick"]';
+console.log(`${pr4ok ? 'PASS' : 'FAIL'} GET /api/probe -> engines=${JSON.stringify(pr4j.engines)}`);
+if (pr4ok) pass += 1;
+
+const pr5 = await worker.fetch(probeReq({ url: 'http://x/y?q=1', authorized: true, engine: 'aegis' }), env);
+console.log(`${pr5.status === 501 ? 'PASS' : 'FAIL'} POST /api/probe engine=aegis -> ${pr5.status}`);
+if (pr5.status === 501) pass += 1;
+
+const pr6 = await worker.fetch(probeReq({ url: 'http://x/probe-clean?q=1', authorized: true, engine: 'quick' }), env);
+const pr6j = await pr6.json();
+const pr6ok = pr6.status === 200 && pr6j.engine === 'quick';
+console.log(`${pr6ok ? 'PASS' : 'FAIL'} POST /api/probe engine=quick -> ${pr6.status}, engine=${pr6j.engine}`);
+if (pr6ok) pass += 1;
+
+const TOTAL = cases.length + 3 + 10;
 console.log(`${pass}/${TOTAL} checks passed`);
 process.exit(pass === TOTAL ? 0 : 1);
