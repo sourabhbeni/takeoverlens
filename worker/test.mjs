@@ -12,6 +12,7 @@ const DNS = {
   'dangle.example.com': { CNAME: ['gone.herokuapp.com'], A: [] },
   'internal.example.com': { CNAME: ['example.com'], A: [] },
   'internal2.example.com': { CNAME: ['www.example.com'], A: [] },
+  'banned.example.com': { CNAME: ['x.pageserve.co'], A: [] },
   'vuln.github.io':     { CNAME: [], A: [] },
   'claimed.github.io':  { CNAME: [], A: ['185.199.108.153'] },
   'gone.herokuapp.com': { CNAME: [], A: [] },
@@ -19,6 +20,7 @@ const DNS = {
 const HTTP = {
   'vuln.example.com':    [404, "<html>There isn't a GitHub Pages site here.</html>"],
   'claimed.example.com': [200, "<html>my blog</html>"],
+  'banned.example.com':  [403, "error code: 1014"],
 };
 const kv = new Map();
 const env = {
@@ -56,6 +58,7 @@ const cases = [
   ['dangle.example.com', 'example.com', 'review'],
   ['internal.example.com', 'example.com', 'ok'],
   ['internal2.example.com', 'example.com', 'ok'],
+  ['banned.example.com', 'example.com', 'ok'],
 ];
 let pass = 0;
 for (const [sub, domain, want] of cases) {
