@@ -10,6 +10,8 @@ const DNS = {
   'plain.example.com':  { CNAME: [], A: ['93.184.216.34'] },
   'weird.example.com':  { CNAME: ['weird.somehost.net'], A: [] },
   'dangle.example.com': { CNAME: ['gone.herokuapp.com'], A: [] },
+  'internal.example.com': { CNAME: ['example.com'], A: [] },
+  'internal2.example.com': { CNAME: ['www.example.com'], A: [] },
   'vuln.github.io':     { CNAME: [], A: [] },
   'claimed.github.io':  { CNAME: [], A: ['185.199.108.153'] },
   'gone.herokuapp.com': { CNAME: [], A: [] },
@@ -47,15 +49,17 @@ globalThis.fetch = async (url, opts) => {
 
 // ---- 1. Verdict matrix ----
 const cases = [
-  ['vuln.example.com', 'vulnerable'],
-  ['claimed.example.com', 'claimed'],
-  ['plain.example.com', 'ok'],
-  ['weird.example.com', 'review'],
-  ['dangle.example.com', 'review'],
+  ['vuln.example.com', 'example.com', 'vulnerable'],
+  ['claimed.example.com', 'example.com', 'claimed'],
+  ['plain.example.com', 'example.com', 'ok'],
+  ['weird.example.com', 'example.com', 'review'],
+  ['dangle.example.com', 'example.com', 'review'],
+  ['internal.example.com', 'example.com', 'ok'],
+  ['internal2.example.com', 'example.com', 'ok'],
 ];
 let pass = 0;
-for (const [sub, want] of cases) {
-  const r = await checkSubdomain(sub);
+for (const [sub, domain, want] of cases) {
+  const r = await checkSubdomain(sub, domain);
   const ok = r.verdict === want;
   if (ok) pass++;
   console.log(`${ok ? 'PASS' : 'FAIL'} ${sub}: got=${r.verdict} want=${want} svc=${r.service}`);
