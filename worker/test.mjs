@@ -44,6 +44,26 @@ globalThis.fetch = async (url, opts) => {
     return { ok: true, json: async () => ({ Answer: rec.map(d => ({ data: d })) }) };
   }
   const host = new URL(url).hostname;
+  const u2 = new URL(url);
+  // Probe targets: behavior keyed by path
+  if (u2.pathname.startsWith('/probe-vuln')) {
+    const q = u2.searchParams.get('q') || '';
+    const html = (t) => ({ ok: true, status: 200,
+      headers: new Headers({ 'content-type': 'text/html' }), text: async () => t });
+    if (q.includes('tlx')) return html(`<p>results for ${q}</p>`);   // verbatim reflection
+    if (q.includes("'")) return html(`You have an error in your SQL syntax near '${q}'`);
+    return html('<html>clean search page</html>');
+  }
+  if (u2.pathname.startsWith('/probe-enc')) {
+    const q = u2.searchParams.get('q') || '';
+    const esc = q.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'text/html' }),
+      text: async () => `<p>${esc}</p>` };
+  }
+  if (u2.pathname.startsWith('/probe-clean')) {
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'text/html' }),
+      text: async () => '<html>nothing reflected here</html>' };
+  }
   const hit = HTTP[host];
   if (!hit) throw new Error('connection failed');
   return { ok: true, status: hit[0], text: async () => hit[1] };
@@ -99,5 +119,45 @@ if (flowOk) pass += 1;
 if (mergedOk) pass += 1;
 if (liveOk && finalStatus === 'done') pass += 1;
 
-console.log(`${pass}/${cases.length + 3} checks passed`);
-process.exit(pass === cases.length + 3 ? 0 : 1);
+// ---- 3. Probe engine: XSS canary, SQLi fingerprints, clean, encoded, no-params ----
+import { probeUrl } from './src/probe.js';
+
+const p1 = await probeUrl('http://x/probe-vuln?q=hello');
+const p1xss = p1.findings.some(f => f.type === 'xss' && f.param === 'q');
+const p1sqli = p1.findings.some(f => f.type === 'sqli' && f.param === 'q');
+console.log(`${p1xss && p1sqli ? 'PASS' : 'FAIL'} probe vulnerable target -> xss=${p1xss} sqli=${p1sqli} (reqs=${p1.requests})`);
+if (p1xss && p1sqli) pass += 1;
+
+const p2 = await probeUrl('http://x/probe-clean?q=hello');
+console.log(`${p2.findings.length === 0 ? 'PASS' : 'FAIL'} probe clean target -> ${p2.findings.length} findings`);
+if (p2.findings.length === 0) pass += 1;
+
+const p3 = await probeUrl('http://x/probe-enc?q=hello');
+const p3info = p3.findings.some(f => f.type === 'xss-info');
+const p3xss = p3.findings.some(f => f.type === 'xss');
+console.log(`${p3info && !p3xss ? 'PASS' : 'FAIL'} probe encoded reflection -> info=${p3info}, false-positive=${p3xss}`);
+if (p3info && !p3xss) pass += 1;
+
+const p4 = await probeUrl('http://x/probe-clean');
+console.log(`${p4.findings.length === 0 && /No query parameters/.test(p4.note) ? 'PASS' : 'FAIL'} probe param-less URL -> honest no-params note`);
+if (p4.findings.length === 0 && /No query parameters/.test(p4.note)) pass += 1;
+
+// ---- 4. /api/probe route: auth gate + validation ----
+const probeReq = (body) => new Request('http://x/api/probe', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+const pr1 = await worker.fetch(probeReq({ url: 'http://x/probe-vuln?q=hello' }), env);
+console.log(`${pr1.status === 400 ? 'PASS' : 'FAIL'} POST /api/probe without auth -> ${pr1.status}`);
+if (pr1.status === 400) pass += 1;
+const pr2 = await worker.fetch(probeReq({ url: 'http://x/probe-vuln?q=hello', authorized: true }), env);
+const pr2j = await pr2.json();
+const pr2ok = pr2.status === 200 && pr2j.findings.some(f => f.type === 'sqli');
+console.log(`${pr2ok ? 'PASS' : 'FAIL'} POST /api/probe authorized -> ${pr2.status}, findings=${pr2j.findings.length}`);
+if (pr2ok) pass += 1;
+const pr3 = await worker.fetch(probeReq({ url: 'ftp://x/y', authorized: true }), env);
+console.log(`${pr3.status === 400 ? 'PASS' : 'FAIL'} POST /api/probe non-http URL -> ${pr3.status}`);
+if (pr3.status === 400) pass += 1;
+
+const TOTAL = cases.length + 3 + 7;
+console.log(`${pass}/${TOTAL} checks passed`);
+process.exit(pass === TOTAL ? 0 : 1);
