@@ -62,6 +62,17 @@ loopback blocked, authorization required. The engine dropdown picks **Quick**
 (triage, everywhere) or **Aegis deep** (Python backend only; optional
 time-based-SQLi checkbox since it's slow). Covered by `worker/test.mjs`.
 
+### Crawl mode (Python backend only)
+
+**Crawl site for SQLi** spiders a site — same origin only, default 20 pages
+(max 50) — collects every query parameter and GET/POST form field on every
+page, then runs the Aegis SQLi/XSS engines over all of them. Each poll
+(`GET /api/crawl-probe/{job_id}`) advances the job a few pages, so the UI
+shows live progress; findings are grouped by page. Crawler-trap protection:
+per-path query-URL cap, 150-point cap, non-HTML skipped. The Worker returns
+501 for crawl routes; `GET /api/probe` advertises `crawl: true/false` and the
+UI hides the card when unsupported.
+
 ## Deploy
 
 **Cloudflare Tunnel** (easiest, free) — run the Python app on your machine and
