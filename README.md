@@ -43,7 +43,17 @@ subset of [can-i-take-over-xyz](https://github.com/EdOverflow/can-i-take-over-xy
 ## API
 
 - `POST /api/scans` → `{domain, extra_subdomains[], authorized}` → `{scan_id}`
-- `GET /api/scans/{scan_id}` → `{status, total, done, results[]}` (poll while scanning)
+- `GET /api/scans/{scan_id}` → `{status, total, done, discovered[], results[]}` (poll while scanning)
+- `POST /api/probe` → `{url, authorized}` → `{findings[]}` — active SQLi/XSS
+  indicator probe on query params (reflected-XSS canary + DB error fingerprints).
+  Findings are indicators, verify manually. Same authorization bar.
+
+## SQLi / XSS probe
+
+Below the scan results, each subdomain has a **probe SQLi/XSS** button that fills
+the probe card — paste a URL with query params (e.g.
+`https://site.example/search?q=test`) and run it. GET-only, max 10 params,
+loopback blocked, authorization required. Covered by `worker/test.mjs`.
 
 ## Deploy
 
