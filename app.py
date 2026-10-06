@@ -43,10 +43,24 @@ def probe_engines() -> list:
     return engines
 
 
+def _validate_probe_url(raw: str) -> str:
+    try:
+        parts = urlparse(raw.strip())
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Invalid URL")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise HTTPException(400, "Only http(s) URLs")
+    host = parts.hostname.lower()
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        raise HTTPException(400, "Loopback targets blocked")
+    return raw.strip()
+
+
 @app.get("/api/probe")
 def probe_info():
     """Which probe engines this deployment supports."""
-    return {"engines": probe_engines()}
+    engines = probe_engines()
+    return {"engines": engines, "crawl": "aegis" in engines}
 
 
 @app.get("/")
@@ -80,22 +94,44 @@ def probe(req: ProbeRequest):
     # Active probing — indicators only, same authorization bar as scans.
     if not req.authorized:
         raise HTTPException(400, "Confirm you are authorized to test this URL")
-    try:
-        parts = urlparse(req.url.strip())
-    except Exception:  # noqa: BLE001
-        raise HTTPException(400, "Invalid URL")
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise HTTPException(400, "Only http(s) URLs")
-    host = parts.hostname.lower()
-    if host == "localhost" or host.startswith("127.") or host == "::1":
-        raise HTTPException(400, "Loopback targets blocked")
-    result = probe_url(req.url.strip()) if req.engine in ("quick", "") else None
+    url = _validate_probe_url(req.url)
+    result = probe_url(url) if req.engine in ("quick", "") else None
     if req.engine == "aegis":
         if "aegis" not in probe_engines():
             raise HTTPException(501, "Aegis engine is not installed on this deployment "
                                      "(pip install git+https://github.com/sourabhbeni/aegis.git)")
         from takeoverlens.aegis_probe import aegis_probe
-        result = aegis_probe(req.url.strip(), include_time=req.include_time)
+        result = aegis_probe(url, include_time=req.include_time)
     elif result is None:
         raise HTTPException(400, f"Unknown probe engine: {req.engine}")
-    return {"url": req.url.strip(), "engine": req.engine or "quick", **result}
+    return {"url": url, "engine": req.engine or "quick", **result}
+
+
+class CrawlProbeRequest(BaseModel):
+    url: str
+    authorized: bool = False
+    max_pages: int = 20
+    include_time: bool = False  # time-based SQLi (slow)
+
+
+@app.post("/api/crawl-probe")
+def crawl_probe_start(req: CrawlProbeRequest):
+    # Site-wide crawl + Aegis scan over every form/query param. Poll the
+    # returned job id — each GET advances the crawl a little.
+    if not req.authorized:
+        raise HTTPException(400, "Confirm you are authorized to test this site")
+    if "aegis" not in probe_engines():
+        raise HTTPException(501, "Crawl mode needs the Python backend with the "
+                                 "Aegis engine installed")
+    url = _validate_probe_url(req.url)
+    from takeoverlens.crawl_probe import start_crawl
+    return {"job_id": start_crawl(url, req.max_pages, req.include_time)}
+
+
+@app.get("/api/crawl-probe/{job_id}")
+def crawl_probe_status(job_id: str):
+    from takeoverlens.crawl_probe import get_crawl
+    job = get_crawl(job_id)
+    if not job:
+        raise HTTPException(404, "Unknown crawl job id")
+    return job
