@@ -1,6 +1,7 @@
-"""TakeoverLens server: scan API + web UI. Passive recon only — nothing is claimed."""
+"""TakeoverLens server: scan API, SQLi/XSS probe API, web UI."""
 
 import re
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from takeoverlens import __version__
+from takeoverlens.probe import probe_url
 from takeoverlens.scanner import get_scan, start_scan
 
 app = FastAPI(title="TakeoverLens", version=__version__)
@@ -21,6 +23,11 @@ DOMAIN_RE = re.compile(
 class ScanRequest(BaseModel):
     domain: str
     extra_subdomains: list[str] = []
+    authorized: bool = False
+
+
+class ProbeRequest(BaseModel):
+    url: str
     authorized: bool = False
 
 
@@ -48,3 +55,21 @@ def scan_status(scan_id: str):
     if not scan:
         raise HTTPException(404, "Unknown scan id")
     return scan
+
+
+@app.post("/api/probe")
+def probe(req: ProbeRequest):
+    # Active probing — indicators only, same authorization bar as scans.
+    if not req.authorized:
+        raise HTTPException(400, "Confirm you are authorized to test this URL")
+    try:
+        parts = urlparse(req.url.strip())
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Invalid URL")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise HTTPException(400, "Only http(s) URLs")
+    host = parts.hostname.lower()
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        raise HTTPException(400, "Loopback targets blocked")
+    result = probe_url(req.url.strip())
+    return {"url": req.url.strip(), **result}
