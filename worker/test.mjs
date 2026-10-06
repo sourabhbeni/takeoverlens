@@ -161,8 +161,8 @@ if (pr3.status === 400) pass += 1;
 // ---- 5. probe engine routing (Aegis is Python-only) ----
 const pr4 = await worker.fetch(new Request('http://x/api/probe'), env);
 const pr4j = await pr4.json();
-const pr4ok = pr4.status === 200 && JSON.stringify(pr4j.engines) === '["quick"]';
-console.log(`${pr4ok ? 'PASS' : 'FAIL'} GET /api/probe -> engines=${JSON.stringify(pr4j.engines)}`);
+const pr4ok = pr4.status === 200 && JSON.stringify(pr4j.engines) === '["quick"]' && pr4j.crawl === false;
+console.log(`${pr4ok ? 'PASS' : 'FAIL'} GET /api/probe -> engines=${JSON.stringify(pr4j.engines)}, crawl=${pr4j.crawl}`);
 if (pr4ok) pass += 1;
 
 const pr5 = await worker.fetch(probeReq({ url: 'http://x/y?q=1', authorized: true, engine: 'aegis' }), env);
@@ -175,6 +175,17 @@ const pr6ok = pr6.status === 200 && pr6j.engine === 'quick';
 console.log(`${pr6ok ? 'PASS' : 'FAIL'} POST /api/probe engine=quick -> ${pr6.status}, engine=${pr6j.engine}`);
 if (pr6ok) pass += 1;
 
-const TOTAL = cases.length + 3 + 10;
+const pr7 = await worker.fetch(new Request('http://x/api/crawl-probe', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ url: 'http://x/', authorized: true })
+}), env);
+console.log(`${pr7.status === 501 ? 'PASS' : 'FAIL'} POST /api/crawl-probe -> ${pr7.status}`);
+if (pr7.status === 501) pass += 1;
+
+const pr8 = await worker.fetch(new Request('http://x/api/crawl-probe/abc123'), env);
+console.log(`${pr8.status === 501 ? 'PASS' : 'FAIL'} GET /api/crawl-probe/abc123 -> ${pr8.status}`);
+if (pr8.status === 501) pass += 1;
+
+const TOTAL = cases.length + 3 + 12;
 console.log(`${pass}/${TOTAL} checks passed`);
 process.exit(pass === TOTAL ? 0 : 1);
