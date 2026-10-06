@@ -29,6 +29,24 @@ class ScanRequest(BaseModel):
 class ProbeRequest(BaseModel):
     url: str
     authorized: bool = False
+    engine: str = "quick"  # quick | aegis
+    include_time: bool = False  # aegis only: time-based SQLi (slow)
+
+
+def probe_engines() -> list:
+    engines = ["quick"]
+    try:
+        import aegis  # noqa: F401
+        engines.append("aegis")
+    except ImportError:
+        pass
+    return engines
+
+
+@app.get("/api/probe")
+def probe_info():
+    """Which probe engines this deployment supports."""
+    return {"engines": probe_engines()}
 
 
 @app.get("/")
@@ -71,5 +89,13 @@ def probe(req: ProbeRequest):
     host = parts.hostname.lower()
     if host == "localhost" or host.startswith("127.") or host == "::1":
         raise HTTPException(400, "Loopback targets blocked")
-    result = probe_url(req.url.strip())
-    return {"url": req.url.strip(), **result}
+    result = probe_url(req.url.strip()) if req.engine in ("quick", "") else None
+    if req.engine == "aegis":
+        if "aegis" not in probe_engines():
+            raise HTTPException(501, "Aegis engine is not installed on this deployment "
+                                     "(pip install git+https://github.com/sourabhbeni/aegis.git)")
+        from takeoverlens.aegis_probe import aegis_probe
+        result = aegis_probe(req.url.strip(), include_time=req.include_time)
+    elif result is None:
+        raise HTTPException(400, f"Unknown probe engine: {req.engine}")
+    return {"url": req.url.strip(), "engine": req.engine or "quick", **result}
