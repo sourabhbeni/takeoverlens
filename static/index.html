@@ -110,6 +110,12 @@
         <h2>SQLi / XSS probe</h2>
         <p style="font-size:.8rem;color:var(--muted);margin-bottom:10px">Active check on query parameters — reflected-XSS canary + error-based SQLi. Findings are indicators, verify manually.</p>
         <input type="text" id="probe-url" placeholder="https://site.example/search?q=test" spellcheck="false" />
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <select id="probe-engine" style="padding:8px 10px;border-radius:8px"></select>
+          <label id="probe-time-wrap" class="pmut" style="display:none;cursor:pointer">
+            <input type="checkbox" id="probe-time" style="vertical-align:-2px" /> time-based SQLi (slow)
+          </label>
+        </div>
         <div style="margin-top:10px"><button class="btn" id="probe-go" style="padding:10px 22px;font-size:.9rem">Run probe</button></div>
         <p id="probe-err"></p>
         <div id="probe-out" style="margin-top:10px"></div>
@@ -212,23 +218,40 @@ function fillProbe(sub) {
   $('probe-url').focus();
 }
 
+// Populate probe engine options from what this deployment supports.
+(async () => {
+  try {
+    const r = await fetch('/api/probe');
+    const d = await r.json();
+    const sel = $('probe-engine');
+    sel.innerHTML = (d.engines || ['quick']).map(e =>
+      `<option value="${e}">${e === 'aegis' ? 'Aegis deep' : 'Quick'}</option>`).join('');
+    sel.addEventListener('change', () => {
+      $('probe-time-wrap').style.display = sel.value === 'aegis' ? '' : 'none';
+    });
+  } catch { /* leave select empty; POST will default */ }
+})();
+
 $('probe-go').addEventListener('click', async () => {
   const url = $('probe-url').value.trim();
   const err = $('probe-err'), out = $('probe-out');
   err.style.display = 'none'; out.innerHTML = '';
   if (!url) { err.textContent = 'Enter a URL with query parameters.'; err.style.display = 'block'; return; }
   if (!$('auth').checked) { err.textContent = 'Tick the authorization box first — active probing needs permission.'; err.style.display = 'block'; return; }
+  const engine = $('probe-engine').value || 'quick';
+  const include_time = engine === 'aegis' && $('probe-time').checked;
   $('probe-go').disabled = true;
-  out.innerHTML = '<p class="pmut">Probing…</p>';
+  out.innerHTML = `<p class="pmut">Probing${engine === 'aegis' ? ' with Aegis — this can take a while' : ''}…</p>`;
   try {
     const r = await fetch('/api/probe', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, authorized: true })
+      body: JSON.stringify({ url, authorized: true, engine, include_time })
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     const d = await r.json();
+    const meta = d.requests != null ? ` (${d.requests} requests)` : (d.points != null ? ` (${d.points} params)` : '');
     if (!d.findings.length) {
-      out.innerHTML = `<p class="pok">No indicators found (${d.requests} requests). ${d.note || ''}</p>`;
+      out.innerHTML = `<p class="pok">No indicators found${meta}. ${d.note || ''}</p>`;
     } else {
       out.innerHTML = d.findings.map(f =>
         `<div class="finding sev-${f.severity}"><span class="sev">${f.severity}</span>` +
