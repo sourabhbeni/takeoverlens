@@ -34,6 +34,19 @@ def _normalize(f: dict) -> dict:
     }
 
 
+def run_sqli_point(session: Session, point: dict, name: str, level: int = 1,
+                   include_time: bool = False) -> list:
+    """Run Aegis error/boolean(/time) SQLi on one injection point."""
+    if include_time:
+        return sqli.scan_point(session, point, name, level=level)
+    orig = sqli.time_payloads
+    sqli.time_payloads = lambda delay: []  # noqa: E731 — skip slow phase
+    try:
+        return sqli.scan_point(session, point, name, level=level)
+    finally:
+        sqli.time_payloads = orig
+
+
 def aegis_probe(target_url: str, include_time: bool = False, level: int = 1) -> dict:
     """Run the Aegis SQLi + XSS engines against a URL's query parameters."""
     session = Session(timeout=10, user_agent="takeoverlens/0.1")
@@ -48,15 +61,7 @@ def aegis_probe(target_url: str, include_time: bool = False, level: int = 1) -> 
     findings: list[dict] = []
     for point in points:
         name = point["name"]
-        if include_time:
-            findings.extend(sqli.scan_point(session, point, name, level=level))
-        else:
-            orig = sqli.time_payloads
-            sqli.time_payloads = lambda delay: []  # noqa: E731 — skip slow phase
-            try:
-                findings.extend(sqli.scan_point(session, point, name, level=level))
-            finally:
-                sqli.time_payloads = orig
+        findings.extend(run_sqli_point(session, point, name, level, include_time))
         findings.extend(xss.scan_point(session, point, name, level=level))
 
     return {
