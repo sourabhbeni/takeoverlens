@@ -278,7 +278,10 @@ export default {
     if (url.pathname === "/api/scans" && req.method === "POST") return createScan(req, env);
     if (url.pathname === "/api/probe" && req.method === "POST") return probeHandler(req);
     // Aegis is Python-only; the Worker ships the quick engine only.
-    if (url.pathname === "/api/probe" && req.method === "GET") return json({ engines: ["quick"] });
+    if (url.pathname === "/api/probe" && req.method === "GET") return json({ engines: ["quick"], crawl: false });
+    if (url.pathname === "/api/crawl-probe" || url.pathname.startsWith("/api/crawl-probe/")) {
+      return json({ detail: "Crawl mode needs the Python backend with the Aegis engine installed" }, 501);
+    }
     const m = url.pathname.match(/^\/api\/scans\/([A-Za-z0-9]+)$/);
     if (m && req.method === "GET") return pollScan(m[1], env);
     return env.ASSETS.fetch(req);
