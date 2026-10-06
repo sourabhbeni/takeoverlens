@@ -22,7 +22,7 @@ def fetch_body(subdomain: str) -> tuple[int | None, str]:
     return None, ""
 
 
-def check_subdomain(subdomain: str) -> dict:
+def check_subdomain(subdomain: str, domain: str) -> dict:
     """Full verification for one subdomain. Never claims anything, only observes."""
     result = {
         "subdomain": subdomain,
@@ -42,6 +42,15 @@ def check_subdomain(subdomain: str) -> dict:
 
     target = cnames[0].rstrip(".")
     result["cname"] = target
+
+    # Internal CNAME: points at the scanned domain itself (apex or sub).
+    # Only the domain owner's DNS controls that zone — not takeoverable.
+    if target == domain or target.endswith("." + domain):
+        result["evidence"].append(
+            f"CNAME points inside {domain} itself — internal alias, not takeoverable."
+        )
+        return result
+
     svc = match_service(target)
 
     if not svc:
