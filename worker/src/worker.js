@@ -68,7 +68,7 @@ async function fetchBody(sub) {
   return [null, ""];
 }
 
-export async function checkSubdomain(sub) {
+export async function checkSubdomain(sub, domain) {
   const result = {
     subdomain: sub, cname: null, a_records: [], service: null,
     http_status: null, verdict: "ok", evidence: [],
@@ -81,6 +81,12 @@ export async function checkSubdomain(sub) {
   }
   const target = cnames[0].replace(/\.$/, "");
   result.cname = target;
+  // Internal CNAME: points at the scanned domain itself (apex or sub).
+  // Only the domain owner's DNS controls that zone — not takeoverable.
+  if (target === domain || target.endsWith("." + domain)) {
+    result.evidence.push(`CNAME points inside ${domain} itself — internal alias, not takeoverable.`);
+    return result;
+  }
   const svc = matchService(target);
   if (!svc) {
     result.verdict = "review";
@@ -195,7 +201,7 @@ async function pollScan(id, env) {
     if (scan.status === "scanning") {
       const chunk = scan.queue.splice(0, CHUNK);
       for (const sub of chunk) {
-        scan.results.push(await checkSubdomain(sub));
+        scan.results.push(await checkSubdomain(sub, scan.domain));
         scan.done++;
       }
       if (!scan.queue.length) {
