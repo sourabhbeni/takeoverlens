@@ -54,7 +54,9 @@ expose it: full guide in [docs/TUNNEL.md](docs/TUNNEL.md), including a stable
 **Cloudflare Workers** (serverless) — `worker/` is a complete port: the same
 scan engine in JavaScript, chunked polling (each poll processes a few
 subdomains to respect Worker CPU limits), scan state in KV, and the same UI as
-static assets.
+static assets. Enumeration merges crt.sh and hackertarget so one flaky source
+doesn't blank the results, and the UI shows a live "discovered subdomains" feed
+with per-subdomain status as checks complete.
 
 ```bash
 cd worker
