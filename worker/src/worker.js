@@ -137,6 +137,40 @@ async function createScan(req, env) {
   return json({ scan_id: id });
 }
 
+async function enumerateHackertarget(domain) {
+  const r = await fetch(`https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(domain)}`, {
+    headers: { "User-Agent": "takeoverlens/0.1" },
+    signal: AbortSignal.timeout(CRTSH_TIMEOUT_MS),
+  });
+  if (!r.ok) throw new Error(`hackertarget: HTTP ${r.status}`);
+  const text = await r.text();
+  if (/error/i.test(text) && text.length < 200)
+    throw new Error(`hackertarget: ${text.trim().slice(0, 80)}`);
+  const subs = new Set();
+  for (const line of text.split("\n")) {
+    const n = line.split(",")[0].trim().toLowerCase().replace(/\.$/, "");
+    if (n && !n.includes("*") && (n === domain || n.endsWith("." + domain))) subs.add(n);
+  }
+  return [...subs].sort();
+}
+
+async function enumerateAll(domain) {
+  // Merge crt.sh + hackertarget; either source may fail — notes say which.
+  const found = new Set();
+  const notes = [];
+  try {
+    for (const s of await enumerateCrtsh(domain)) found.add(s);
+  } catch (e) {
+    notes.push(`crt.sh failed (${String(e.message || e).slice(0, 60)})`);
+  }
+  try {
+    for (const s of await enumerateHackertarget(domain)) found.add(s);
+  } catch (e) {
+    notes.push(`hackertarget failed (${String(e.message || e).slice(0, 60)})`);
+  }
+  return { subs: [...found].sort(), notes };
+}
+
 async function pollScan(id, env) {
   const raw = await env.SCANS.get(id);
   if (!raw) return json({ detail: "Unknown scan id" }, 404);
@@ -144,14 +178,15 @@ async function pollScan(id, env) {
 
   try {
     if (scan.status === "enumerating") {
-      let subs = [];
-      try {
-        subs = await enumerateCrtsh(scan.domain);
-      } catch (e) {
-        scan.enum_note = `crt.sh unavailable (${String(e.message || e).slice(0, 120)}); using manual list + apex.`;
+      const { subs, notes } = await enumerateAll(scan.domain);
+      if (notes.length) {
+        scan.enum_note = subs.length
+          ? "Partial enumeration: " + notes.join("; ")
+          : "Enumeration sources failed (" + notes.join("; ") + "); using manual list + apex.";
       }
       const all = [...new Set([...subs, ...scan.extra, scan.domain])].sort();
-      scan.queue = all;
+      scan.all = all;          // full ordered list, for live discovery display
+      scan.queue = [...all];
       scan.total = all.length;
       scan.status = "scanning";
       delete scan.extra;
@@ -179,7 +214,15 @@ async function pollScan(id, env) {
     await env.SCANS.put(id, JSON.stringify(scan), { expirationTtl: SCAN_TTL });
   }
 
-  const { queue, extra, ...pub } = scan;
+  const { queue, extra, all, ...pub } = scan;
+  // Live discovery: every known subdomain with its check status, so the UI can
+  // render them in real time as results land.
+  const verdictBySub = new Map(scan.results.map((r) => [r.subdomain, r.verdict]));
+  pub.discovered = (all || []).map((s) => ({
+    subdomain: s,
+    status: verdictBySub.has(s) ? "done" : "pending",
+    verdict: verdictBySub.get(s) || null,
+  }));
   return json(pub);
 }
 
