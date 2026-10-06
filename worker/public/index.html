@@ -48,6 +48,7 @@
           border-radius:6px; padding:4px 10px; font-family:inherit; font-size:.72rem; cursor:pointer; }
   .pbtn:hover { background:#2a1515; }
   #probe-err { color:#ff8589; font-size:.85rem; margin-top:10px; display:none; }
+  #crawl-err { color:#ff8589; font-size:.85rem; margin-top:10px; display:none; }
   .finding { border:1px solid var(--line); border-left-width:4px; border-radius:8px;
              padding:10px 12px; margin:8px 0; font-size:.82rem; background:#0c0f0c; }
   .finding.sev-high { border-left-color:var(--accent); }
@@ -119,6 +120,23 @@
         <div style="margin-top:10px"><button class="btn" id="probe-go" style="padding:10px 22px;font-size:.9rem">Run probe</button></div>
         <p id="probe-err"></p>
         <div id="probe-out" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" id="crawl-card" style="margin-top:16px;display:none">
+        <h2>Crawl site for SQLi</h2>
+        <p class="pmut">Spiders same-origin pages, collects every form and query parameter, and runs the Aegis SQLi/XSS engines over all of them. Python backend only.</p>
+        <input type="text" id="crawl-url" placeholder="https://site.example/" spellcheck="false" />
+        <div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <label class="pmut">max pages <input type="number" id="crawl-max" value="20" min="1" max="50" style="width:64px;padding:6px 8px;border-radius:8px" /></label>
+          <label class="pmut" style="cursor:pointer"><input type="checkbox" id="crawl-time" style="vertical-align:-2px" /> time-based SQLi (slow)</label>
+          <button class="btn" id="crawl-go" style="padding:10px 22px;font-size:.9rem">Start crawl</button>
+        </div>
+        <div id="crawl-bar-wrap" style="display:none;margin-top:12px">
+          <div style="background:#1c1c22;border-radius:8px;height:10px;overflow:hidden"><div id="crawl-bar" style="height:100%;width:0%;background:#0071e3;transition:width .3s"></div></div>
+          <p class="pmut" id="crawl-status" style="margin-top:6px"></p>
+        </div>
+        <p id="crawl-err"></p>
+        <div id="crawl-out" style="margin-top:10px"></div>
       </div>
     </div>
     <div>
@@ -229,6 +247,7 @@ function fillProbe(sub) {
     sel.addEventListener('change', () => {
       $('probe-time-wrap').style.display = sel.value === 'aegis' ? '' : 'none';
     });
+    if (d.crawl) $('crawl-card').style.display = '';
   } catch { /* leave select empty; POST will default */ }
 })();
 
@@ -261,6 +280,74 @@ $('probe-go').addEventListener('click', async () => {
     }
   } catch (e) { err.textContent = 'Probe failed: ' + e.message; err.style.display = 'block'; }
   $('probe-go').disabled = false;
+});
+
+// ---- Crawl mode: spider the site, Aegis-scan every form + query param ----
+let crawlTimer = null;
+function renderCrawl(d) {
+  const bar = $('crawl-bar'), st = $('crawl-status');
+  $('crawl-bar-wrap').style.display = '';
+  if (d.status === 'crawling') {
+    bar.style.width = Math.min(95, Math.round(100 * d.pages_crawled / Math.max(1, d.max_pages))) + '%';
+    st.textContent = `Crawling… ${d.pages_crawled}/${d.max_pages} pages, ${d.points_found} injection points found`;
+  } else if (d.status === 'scanning') {
+    bar.style.width = d.points_found ? Math.round(100 * d.points_tested / d.points_found) + '%' : '100%';
+    st.textContent = `Scanning… ${d.points_tested}/${d.points_found} points tested`;
+  } else {
+    bar.style.width = '100%';
+    st.textContent = `Done — ${d.pages_crawled} pages crawled, ${d.points_found} points tested`;
+  }
+  const out = $('crawl-out');
+  if (!d.findings.length) {
+    out.innerHTML = d.status === 'done' ? `<p class="pok">No SQLi/XSS indicators found across ${d.points_found} injection points. ${d.note || ''}</p>` : '';
+    return;
+  }
+  const byPage = {};
+  d.findings.forEach(f => { (byPage[f.page || '?'] = byPage[f.page || '?'] || []).push(f); });
+  out.innerHTML = Object.entries(byPage).map(([page, fs]) =>
+    `<p class="mono" style="margin:12px 0 4px">${page}</p>` +
+    fs.map(f =>
+      `<div class="finding sev-${f.severity}"><span class="sev">${f.severity}</span>` +
+      `<b>${f.type.toUpperCase()}</b> · param <span class="mono">${f.param}</span><br>` +
+      `<span class="fev">${f.evidence}</span></div>`
+    ).join('')
+  ).join('') + (d.status === 'done' ? `<p class="pmut">${d.note || ''}</p>` : '');
+}
+async function pollCrawl(jobId) {
+  try {
+    const r = await fetch('/api/crawl-probe/' + jobId);
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    renderCrawl(d);
+    if (d.status === 'done') { clearInterval(crawlTimer); crawlTimer = null; $('crawl-go').disabled = false; }
+  } catch (e) {
+    clearInterval(crawlTimer); crawlTimer = null; $('crawl-go').disabled = false;
+    const err = $('crawl-err'); err.textContent = 'Crawl failed: ' + e.message; err.style.display = 'block';
+  }
+}
+$('crawl-go').addEventListener('click', async () => {
+  const url = $('crawl-url').value.trim();
+  const err = $('crawl-err');
+  err.style.display = 'none'; $('crawl-out').innerHTML = '';
+  if (!url) { err.textContent = 'Enter the site URL to crawl.'; err.style.display = 'block'; return; }
+  if (!$('auth').checked) { err.textContent = 'Tick the authorization box first — active probing needs permission.'; err.style.display = 'block'; return; }
+  if (crawlTimer) { clearInterval(crawlTimer); crawlTimer = null; }
+  $('crawl-go').disabled = true;
+  $('crawl-bar-wrap').style.display = '';
+  $('crawl-bar').style.width = '2%';
+  $('crawl-status').textContent = 'Starting crawl…';
+  try {
+    const r = await fetch('/api/crawl-probe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, authorized: true,
+        max_pages: Math.max(1, Math.min(50, parseInt($('crawl-max').value) || 20)),
+        include_time: $('crawl-time').checked })
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    crawlTimer = setInterval(() => pollCrawl(d.job_id), 1500);
+    pollCrawl(d.job_id);
+  } catch (e) { err.textContent = 'Crawl failed: ' + e.message; err.style.display = 'block'; $('crawl-go').disabled = false; }
 });
 </script>
 </body>
