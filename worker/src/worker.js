@@ -6,6 +6,7 @@
 // per-request CPU), with scan state in KV. Passive recon only.
 
 import { matchService } from "./services.js";
+import { probeUrl } from "./probe.js";
 
 const CHUNK = 2;               // subdomains processed per poll — raise cautiously
 const HTTP_TIMEOUT_MS = 10000;
@@ -242,10 +243,34 @@ async function pollScan(id, env) {
   return json(pub);
 }
 
+async function probeHandler(req) {
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ detail: "Invalid JSON" }, 400);
+  }
+  if (!body.authorized) return json({ detail: "Confirm you are authorized to test this URL" }, 400);
+  let url;
+  try {
+    url = new URL(String(body.url || ""));
+  } catch {
+    return json({ detail: "Invalid URL" }, 400);
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return json({ detail: "Only http(s) URLs" }, 400);
+  const host = url.hostname.toLowerCase();
+  if (host === "localhost" || host.startsWith("127.") || host === "[::1]") {
+    return json({ detail: "Loopback targets blocked" }, 400);
+  }
+  const result = await probeUrl(url.toString());
+  return json({ url: url.toString(), ...result });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname === "/api/scans" && req.method === "POST") return createScan(req, env);
+    if (url.pathname === "/api/probe" && req.method === "POST") return probeHandler(req);
     const m = url.pathname.match(/^\/api\/scans\/([A-Za-z0-9]+)$/);
     if (m && req.method === "GET") return pollScan(m[1], env);
     return env.ASSETS.fetch(req);
