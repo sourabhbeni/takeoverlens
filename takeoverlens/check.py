@@ -54,6 +54,17 @@ def check_subdomain(subdomain: str, domain: str) -> dict:
     svc = match_service(target)
 
     if not svc:
+        # Unknown service — fetch once and look for definitive not-takeoverable
+        # signals before falling back to manual review.
+        status, body = fetch_body(subdomain)
+        result["http_status"] = status
+        if "error code: 1014" in body:
+            result["evidence"].append(
+                f"CNAME points to {target}, but Cloudflare rejected it "
+                "(error 1014: CNAME Cross-User Banned) — the target zone doesn't "
+                "serve this hostname and it isn't self-service claimable."
+            )
+            return result
         result["verdict"] = "review"
         result["evidence"].append(
             f"CNAME points to external host {target} (unknown service) — check manually."
