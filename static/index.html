@@ -27,10 +27,23 @@
   .btn { display:inline-block; background:var(--accent); color:#fff; border:none; border-radius:8px;
          padding:12px 28px; font-family:inherit; font-weight:700; font-size:.95rem; cursor:pointer; }
   .btn:disabled { opacity:.5; cursor:wait; }
-  #progress { display:none; margin-top:14px; }
-  .bar { height:8px; background:#0c0f0c; border-radius:5px; overflow:hidden; }
-  .bar i { display:block; height:100%; background:var(--accent); width:0%; transition:width .3s; }
-  #ptext { font-size:.8rem; color:var(--muted); margin-top:6px; }
+  #progress { display:none; margin-top:14px; background:#0c0f0c; border:1px solid var(--line);
+              border-radius:10px; padding:12px; }
+  .bar { height:12px; background:#1c241c; border-radius:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,#e5484d,#e0a458); width:0%; transition:width .3s; }
+  #ptext { font-size:.85rem; color:var(--text); margin-top:8px; }
+  #ptext .pct { color:var(--accent); font-weight:700; }
+  #live-card { display:none; margin-top:16px; }
+  #live-list { display:flex; flex-wrap:wrap; gap:6px; max-height:180px; overflow-y:auto; margin-top:4px; }
+  .chip { font-size:.72rem; padding:4px 10px; border-radius:999px; border:1px solid var(--line);
+          background:#0c0f0c; color:var(--muted); }
+  .chip.done-vulnerable { color:#ff8589; border-color:#7a2a2a; background:#3d1414; }
+  .chip.done-review { color:#f0c27a; border-color:#7a5a2a; background:#3a2c14; }
+  .chip.done-claimed { color:#7fe0a0; border-color:#2a7a44; background:#14301c; }
+  .chip.done-ok { color:var(--muted); }
+  .chip .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--muted); margin-right:6px; }
+  .chip.pending .dot { animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity:.25; } }
   #summary { display:none; gap:8px; margin:16px 0; flex-wrap:wrap; }
   .stat { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:.85rem; }
   table { width:100%; border-collapse:collapse; font-size:.82rem; }
@@ -71,6 +84,10 @@
         <div id="progress"><div class="bar"><i id="barfill"></i></div><p id="ptext"></p></div>
       </div>
       <div id="summary"></div>
+      <div class="card" id="live-card">
+        <h2>Discovered subdomains <span id="live-count" style="color:var(--text)"></span></h2>
+        <div id="live-list"></div>
+      </div>
       <div class="card" id="results-card" style="display:none">
         <h2>Results</h2>
         <table><thead><tr><th>Subdomain</th><th>DNS / Service</th><th>Verdict</th></tr></thead>
@@ -108,6 +125,8 @@ $('go').addEventListener('click', async () => {
   $('progress').style.display = 'block';
   $('results-card').style.display = 'none';
   $('summary').style.display = 'none';
+  $('live-card').style.display = 'none';
+  $('live-list').innerHTML = '';
   try {
     const r = await fetch('/api/scans', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -129,7 +148,17 @@ function poll(id) {
     if (s.status === 'error') { clearInterval(timer); showErr(s.error || 'Scan failed'); $('go').disabled = false; return; }
     const pct = s.total ? Math.round(s.done / s.total * 100) : 0;
     $('barfill').style.width = pct + '%';
-    $('ptext').textContent = `${s.status} — ${s.done}/${s.total} subdomains` + (s.enum_note ? ' (' + s.enum_note + ')' : '');
+    $('ptext').innerHTML = `<span class="pct">${pct}%</span> — ${s.status}: checked ${s.done}/${s.total} subdomains` +
+      (s.enum_note ? `<br><span style="font-size:.75rem">${s.enum_note}</span>` : '');
+    if (s.discovered && s.discovered.length) {
+      $('live-card').style.display = 'block';
+      $('live-count').textContent = `(${s.discovered.length})`;
+      $('live-list').innerHTML = s.discovered.map(d =>
+        d.status === 'done'
+          ? `<span class="chip done-${d.verdict}">${d.subdomain} · ${d.verdict}</span>`
+          : `<span class="chip pending"><span class="dot"></span>${d.subdomain}</span>`
+      ).join('');
+    }
     if (s.status === 'done') { clearInterval(timer); render(s); $('go').disabled = false; }
   }, 1500);
 }
